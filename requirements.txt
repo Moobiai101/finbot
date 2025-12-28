@@ -3,8 +3,9 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
 python-multipart
 
-# Broker SDK
+# Broker SDK and its dependencies
 smartapi-python
+websocket-client  # Required by smartapi-python (not declared in their setup.py)
 
 # Database & Cache
 supabase>=2.0.0
@@ -14,6 +15,7 @@ redis>=5.0.0
 pandas>=2.0.0
 pandas-ta
 numpy>=1.24.0
+pyarrow  # For parquet file support
 
 # Config & Auth
 pydantic>=2.0.0
@@ -27,7 +29,6 @@ apscheduler
 
 # Logging
 loguru
-logzero
 
 # HTTP & WebSockets
 httpx>=0.24.0
@@ -35,4 +36,3 @@ websockets>=11.0
 
 # Utilities
 tqdm
-pyarrow
