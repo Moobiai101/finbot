@@ -106,17 +106,10 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.trading_mode != "live" else None,
     )
     
-    # CORS middleware
+    # CORS middleware - use configurable origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",  # Vite dev server
-            "http://localhost:5174",  # Alternative Vite port
-            "http://localhost:5175",  # Alternative Vite port
-            "http://localhost:3000",
-            "https://*.railway.app",  # Production backend
-            "https://*.pages.dev",    # Cloudflare Pages
-        ],
+        allow_origins=settings.cors_origins_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

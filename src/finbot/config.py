@@ -2,7 +2,8 @@
 
 from enum import Enum
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, List
+import os
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -72,7 +73,27 @@ class Settings(BaseSettings):
 
     # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
-    api_port: int = Field(default=8000, description="API port")
+    port: int = Field(default=8000, description="API port (Railway sets PORT env var)")
+    
+    # CORS - comma-separated list of allowed origins
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://localhost:3000",
+        description="Comma-separated list of allowed CORS origins"
+    )
+    
+    # Frontend URL (for redirects, etc.)
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Frontend URL"
+    )
+    
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Parse CORS origins into a list."""
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Always allow Railway and Cloudflare patterns
+        patterns = ["https://*.railway.app", "https://*.pages.dev"]
+        return origins + patterns
     
     @property
     def max_position_value(self) -> float:
