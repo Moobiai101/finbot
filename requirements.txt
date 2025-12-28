@@ -3,9 +3,10 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
 python-multipart
 
-# Broker SDK and its dependencies
+# Broker SDK and its undeclared dependencies
 smartapi-python
 websocket-client  # Required by smartapi-python (not declared in their setup.py)
+logzero           # Required by smartapi-python (not declared in their setup.py)
 
 # Database & Cache
 supabase>=2.0.0
