@@ -99,11 +99,11 @@ class SupabaseDB:
             self.client.table("system_config")
             .select("value")
             .eq("key", key)
-            .single()
+            .limit(1)
             .execute()
         )
-        return result.data.get("value") if result.data else None
-    
+        return result.data[0].get("value") if result.data else None
+
     async def set_config(self, key: str, value: dict) -> None:
         """Set a system configuration value (upsert)."""
         self.client.table("system_config").upsert({
@@ -111,20 +111,20 @@ class SupabaseDB:
             "value": value,
         }).execute()
         logger.debug(f"Config updated: {key}")
-    
+
     async def get_trading_mode(self) -> str:
         """Get current trading mode."""
         settings = get_settings()
         config = await self.get_config("trading_mode")
         return config.get("mode") if config else settings.trading_mode.value
-    
+
     async def set_trading_mode(self, mode: str) -> None:
         """Set trading mode."""
         await self.set_config("trading_mode", {"mode": mode})
         logger.info(f"Trading mode set to: {mode}")
-    
+
     # ==================== AUDIT LOG ====================
-    
+
     async def log_action(
         self,
         action: str,
@@ -137,9 +137,9 @@ class SupabaseDB:
             "action": action,
             "details": details or {},
         }).execute()
-    
+
     # ==================== CANDLES (Historical Data) ====================
-    
+
     async def save_candles(self, symbol: str, timeframe: str, candles: list) -> None:
         """Save historical candle data."""
         records = [
@@ -154,7 +154,7 @@ class SupabaseDB:
         self.client.table("candles").upsert(
             records, on_conflict="symbol,timeframe,timestamp"
         ).execute()
-    
+
     async def get_candles(
         self,
         symbol: str,
@@ -174,26 +174,26 @@ class SupabaseDB:
             .execute()
         )
         return result.data
-    
+
     # ==================== LEVELS (S/R, Pivots) ====================
-    
+
     async def save_levels(self, symbol: str, levels: dict) -> None:
         """Save computed support/resistance levels."""
         self.client.table("levels").upsert({
             "symbol": symbol,
             "data": levels,
         }, on_conflict="symbol").execute()
-    
+
     async def get_levels(self, symbol: str) -> Optional[dict]:
         """Get computed levels for a symbol."""
         result = (
             self.client.table("levels")
             .select("data")
             .eq("symbol", symbol)
-            .single()
+            .limit(1)
             .execute()
         )
-        return result.data.get("data") if result.data else None
+        return result.data[0].get("data") if result.data else None
 
 
 # Singleton instance
