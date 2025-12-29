@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Optional, List
 import os
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,16 @@ class TradingMode(str, Enum):
     PAPER = "paper"
     LIVE = "live"
     BACKTEST = "backtest"
+    
+    @classmethod
+    def _missing_(cls, value: object):
+        """Handle case-insensitive enum lookup."""
+        if isinstance(value, str):
+            lower_value = value.lower()
+            for member in cls:
+                if member.value == lower_value:
+                    return member
+        return None
 
 
 class Settings(BaseSettings):
