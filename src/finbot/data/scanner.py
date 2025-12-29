@@ -8,6 +8,18 @@ from loguru import logger
 from finbot.broker.angel_client import get_angel_client, AngelOneClient
 
 
+def _get_exchange_for_symbol(symbol: str, default_exchange: str = "NSE") -> str:
+    """
+    Determine correct exchange for a symbol.
+    
+    Futures symbols end with patterns like 30DEC25FUT, 26DEC24FUT, etc.
+    These must be traded on NFO (NSE Futures & Options) not NSE.
+    """
+    if symbol and symbol.endswith("FUT"):
+        return "NFO"
+    return default_exchange
+
+
 @dataclass
 class HotStock:
     """A stock identified by the scanner."""
@@ -48,10 +60,12 @@ class StockScanner:
             
             stocks = []
             for item in data[:top_n]:
+                symbol = item.get("tradingSymbol", "")
+                exchange = _get_exchange_for_symbol(symbol, item.get("exchange", "NSE"))
                 stocks.append(HotStock(
-                    symbol=item.get("tradingSymbol", ""),
+                    symbol=symbol,
                     token=str(item.get("symbolToken", "")),
-                    exchange=item.get("exchange", "NSE"),
+                    exchange=exchange,
                     ltp=float(item.get("ltp", 0)),
                     change_percent=float(item.get("percentChange", 0)),
                     volume=int(item.get("volume", 0)),
@@ -75,10 +89,12 @@ class StockScanner:
             
             stocks = []
             for item in data[:top_n]:
+                symbol = item.get("tradingSymbol", "")
+                exchange = _get_exchange_for_symbol(symbol, item.get("exchange", "NSE"))
                 stocks.append(HotStock(
-                    symbol=item.get("tradingSymbol", ""),
+                    symbol=symbol,
                     token=str(item.get("symbolToken", "")),
-                    exchange=item.get("exchange", "NSE"),
+                    exchange=exchange,
                     ltp=float(item.get("ltp", 0)),
                     change_percent=float(item.get("percentChange", 0)),
                     volume=int(item.get("volume", 0)),

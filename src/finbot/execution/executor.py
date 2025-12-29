@@ -439,8 +439,22 @@ class TradingExecutor:
     
     def get_status(self) -> dict:
         """Get executor status."""
+        # Read current mode from database for real-time sync with frontend
+        from finbot.database import get_db
+        try:
+            import asyncio
+            db = get_db()
+            # Run async method - get or create event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+            current_mode = loop.run_until_complete(db.get_trading_mode())
+        except Exception:
+            current_mode = self.settings.trading_mode.value
+        
         return {
-            "mode": self.settings.trading_mode.value,
+            "mode": current_mode,
             "is_running": self.is_running,
             "watchlist_count": len(self.watchlist),
             "active_trades": len(self.active_trades),
