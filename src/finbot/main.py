@@ -111,10 +111,11 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     
     # CORS middleware - added SECOND so it runs FIRST (handles OPTIONS preflight)
+    # Using ["*"] for origins since FastAPI doesn't support wildcard patterns
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins_list,
-        allow_credentials=True,
+        allow_origins=["*"],  # Allow all origins in paper mode
+        allow_credentials=False,  # Must be False when using ["*"]
         allow_methods=["*"],
         allow_headers=["*"],
     )
