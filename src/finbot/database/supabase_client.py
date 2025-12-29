@@ -204,5 +204,6 @@ def get_db() -> SupabaseDB:
     """Get SupabaseDB singleton instance."""
     global _db
     if _db is None:
-        _db = SupabaseDB()
+        # Use service client for backend operations to bypass RLS
+        _db = SupabaseDB(client=get_service_client())
     return _db
