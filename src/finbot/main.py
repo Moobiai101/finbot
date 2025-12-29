@@ -106,7 +106,11 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.trading_mode != "live" else None,
     )
     
-    # CORS middleware - use configurable origins
+    # Auth Middleware - added FIRST so it runs AFTER CORS
+    from finbot.api.auth import AuthMiddleware
+    app.add_middleware(AuthMiddleware)
+    
+    # CORS middleware - added SECOND so it runs FIRST (handles OPTIONS preflight)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -125,9 +129,10 @@ def create_app() -> FastAPI:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
     
-    # Auth Middleware
-    from finbot.api.auth import AuthMiddleware
-    app.add_middleware(AuthMiddleware)
+    # Root endpoint
+    @app.get("/")
+    async def root():
+        return {"message": "Finbot Trading API", "version": "0.1.0", "status": "running"}
 
     # Include API routes
     app.include_router(api_router, prefix="/api/v1")
