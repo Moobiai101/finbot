@@ -44,16 +44,14 @@ class RedisService:
             return
 
         try:
-            logger.info(f"Connecting to Redis at {self.settings.redis_url.split('@')[-1]}...") # Log masked URL
+            logger.info(f"Connecting to Redis at {self.settings.redis_url.split('@')[-1]}...")  # Log masked URL
+            # from_url automatically handles SSL when URL uses rediss:// scheme
             self._redis = redis.from_url(
                 self.settings.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
                 socket_timeout=5.0,
                 socket_connect_timeout=5.0,
-                # SSL settings for Upstash
-                ssl=True if "rediss://" in self.settings.redis_url else False,
-                ssl_cert_reqs=None
             )
             await self._redis.ping()
             logger.info("✅ Redis connected successfully")
