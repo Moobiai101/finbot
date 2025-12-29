@@ -115,7 +115,8 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "https://ac956692.finbotfrontend.pages.dev",  # Production Frontend
+            "https://finbotfrontend.pages.dev",  # Main Production Frontend
+            "https://ac956692.finbotfrontend.pages.dev",  # Old deployment (for backwards compat)
             "http://localhost:5173",  # Local Dev
             "http://localhost:4173",  # Local Preview
         ],
