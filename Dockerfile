@@ -4,8 +4,7 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src \
-    PORT=8000
+    PYTHONPATH=/app/src
 
 # Set work directory
 WORKDIR /app
