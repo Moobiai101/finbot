@@ -34,12 +34,17 @@ async def run_backtest_task(job_id: str, start: datetime, end: datetime, capital
     try:
         await redis_svc.update_job_status(job_id, "running")
         
+        # Login to Angel One for symbol resolution
+        from finbot.broker.angel_client import get_angel_client
+        client = get_angel_client()
+        if not await client.try_restore_session():
+            await client.login()
+        
         # Initialize Engine (must run in threadpool as it might do IO/CPU)
-        # However, BacktestEngine init is light. run() is heavy.
         engine = BacktestEngine(start, end, capital)
         if symbols:
             # Override universe if provided
-            pass # TODO: Implement symbol override in engine if needed
+            pass  # TODO: Implement symbol override in engine if needed
         
         # Run Backtest (CPU heavy) in threadpool to avoid blocking async loop
         portfolios = await asyncio.to_thread(engine.run)

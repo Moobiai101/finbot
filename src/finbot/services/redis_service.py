@@ -12,7 +12,7 @@ Handles all interactions with Redis (Upstash) including:
 import json
 import asyncio
 from typing import Optional, Any, Union
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import redis.asyncio as redis
 from loguru import logger
