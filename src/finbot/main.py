@@ -114,8 +114,12 @@ def create_app() -> FastAPI:
     # Using ["*"] for origins since FastAPI doesn't support wildcard patterns
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins in paper mode
-        allow_credentials=False,  # Must be False when using ["*"]
+        allow_origins=[
+            "https://ac956692.finbotfrontend.pages.dev",  # Production Frontend
+            "http://localhost:5173",  # Local Dev
+            "http://localhost:4173",  # Local Preview
+        ],
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
