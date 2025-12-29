@@ -5,6 +5,8 @@ from functools import wraps
 
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from loguru import logger
 
 from finbot.database import get_supabase_client
@@ -74,18 +76,20 @@ def require_auth(func):
     return wrapper
 
 
-class AuthMiddleware:
+class AuthMiddleware(BaseHTTPMiddleware):
     """Middleware for authentication checks."""
     
-    def __init__(self, public_paths: list[str] = None):
+    def __init__(self, app, public_paths: list[str] = None):
+        super().__init__(app)
         self.public_paths = public_paths or [
+            "/",
             "/health",
             "/docs",
             "/redoc",
             "/openapi.json",
         ]
     
-    async def __call__(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
         if any(request.url.path.startswith(p) for p in self.public_paths):
             return await call_next(request)
@@ -101,6 +105,9 @@ class AuthMiddleware:
             if settings.trading_mode == TradingMode.PAPER:
                 return await call_next(request)
             
-            return HTTPException(status_code=401, detail="Missing authentication")
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing authentication"}
+            )
         
         return await call_next(request)
