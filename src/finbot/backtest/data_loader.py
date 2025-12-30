@@ -2,6 +2,7 @@
 Data Loader for Backtesting.
 
 Handles fetching, caching, and loading historical data.
+Includes automatic token refresh for long-running data fetches.
 """
 
 import os
@@ -18,6 +19,7 @@ from finbot.config import get_settings
 from finbot.broker.angel_client import get_angel_client, AngelOneClient, Candle
 from finbot.services.redis_service import RedisService
 
+
 class DataLoader:
     """
     Robust data loader with chunking and caching.
@@ -33,6 +35,58 @@ class DataLoader:
         
     def _get_cache_path(self, symbol: str, interval: str) -> Path:
         return self.cache_dir / f"{symbol}_{interval}.parquet"
+
+    def _refresh_token_sync(self) -> bool:
+        """
+        Synchronously refresh the Angel One token.
+        This handles token expiration during long-running data fetches.
+        
+        Returns:
+            bool: True if refresh was successful, False otherwise.
+        """
+        try:
+            logger.info("🔄 Attempting to refresh Angel One session...")
+            
+            # Get or create an event loop for the async operation
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            
+            if loop and loop.is_running():
+                # We're in an async context but need to run sync
+                # Create a new thread to run the async login
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_async_login)
+                    return future.result(timeout=60)
+            else:
+                # No event loop running, we can create one
+                return asyncio.run(self._async_login())
+                
+        except Exception as e:
+            logger.error(f"Token refresh failed: {e}")
+            return False
+    
+    async def _async_login(self) -> bool:
+        """Perform async login to refresh tokens."""
+        try:
+            # First try refresh_token, then fallback to full login
+            if await self.client.refresh_token():
+                logger.info("✅ Token refreshed via refresh_token()")
+                return True
+            
+            # Fallback to full login
+            await self.client.login()
+            logger.info("✅ Token refreshed via full login()")
+            return True
+        except Exception as e:
+            logger.error(f"Async login failed: {e}")
+            return False
+    
+    def _run_async_login(self) -> bool:
+        """Run async login in a new event loop (for thread context)."""
+        return asyncio.run(self._async_login())
 
     def fetch_data(
         self,
@@ -98,12 +152,20 @@ class DataLoader:
         end: datetime, 
         interval: str
     ) -> pd.DataFrame:
-        """Fetch data in 30-day chunks to respect API limits."""
+        """
+        Fetch data in 30-day chunks to respect API limits.
+        Includes automatic token refresh on consecutive failures.
+        """
         all_candles = []
         current_start = start
         
         # Max chunk size (approx 30 days safe)
         CHUNK_DAYS = 30
+        
+        # Track consecutive empty responses (may indicate token expiration)
+        consecutive_empty = 0
+        MAX_CONSECUTIVE_EMPTY_BEFORE_REFRESH = 3
+        token_refreshed_this_symbol = False
         
         while current_start < end:
             chunk_end = min(current_start + timedelta(days=CHUNK_DAYS), end)
@@ -125,8 +187,27 @@ class DataLoader:
             
             if candles:
                 all_candles.extend(candles)
+                consecutive_empty = 0  # Reset counter on success
             else:
-                logger.warning(f"  No data for chunk {current_start.date()} - {chunk_end.date()}")
+                consecutive_empty += 1
+                logger.warning(f"  No data for chunk {current_start.date()} - {chunk_end.date()} (consecutive empty: {consecutive_empty})")
+                
+                # If we get multiple consecutive empty responses, token may have expired
+                if consecutive_empty >= MAX_CONSECUTIVE_EMPTY_BEFORE_REFRESH and not token_refreshed_this_symbol:
+                    logger.warning(f"  🔐 Multiple consecutive empty responses - attempting token refresh...")
+                    try:
+                        # Try to re-authenticate
+                        success = self._refresh_token_sync()
+                        if success:
+                            logger.info(f"  ✅ Token refreshed successfully - retrying from last failed chunk")
+                            token_refreshed_this_symbol = True
+                            consecutive_empty = 0
+                            # Retry this chunk by not advancing current_start
+                            continue
+                        else:
+                            logger.error(f"  ❌ Token refresh failed - continuing without data")
+                    except Exception as e:
+                        logger.error(f"  ❌ Token refresh error: {e}")
             
             # Rate limit sleep
             time.sleep(0.4) 
