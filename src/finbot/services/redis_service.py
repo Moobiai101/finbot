@@ -240,6 +240,57 @@ class RedisService:
         raw = await self.get(f"job:{job_id}")
         return json.loads(raw) if raw else None
 
+    async def update_job_progress(
+        self, 
+        job_id: str, 
+        current_symbol: str,
+        symbols_done: int,
+        total_symbols: int
+    ) -> None:
+        """Update job progress without changing status."""
+        job_key = f"job:{job_id}"
+        raw = await self.get(job_key)
+        
+        if not raw:
+            return
+            
+        data = json.loads(raw)
+        
+        # Don't update if job is already completed/failed/cancelled
+        if data.get("status") in ["completed", "failed", "cancelled"]:
+            return
+        
+        data["progress"] = {
+            "current_symbol": current_symbol,
+            "symbols_done": symbols_done,
+            "total_symbols": total_symbols,
+            "percentage": round((symbols_done / total_symbols) * 100, 1) if total_symbols > 0 else 0,
+            "last_update": datetime.now().isoformat()
+        }
+        
+        await self.set(job_key, json.dumps(data), ttl=86400*7)
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """Cancel a running job."""
+        job_key = f"job:{job_id}"
+        raw = await self.get(job_key)
+        
+        if not raw:
+            return False
+            
+        data = json.loads(raw)
+        
+        # Only cancel if running or pending
+        if data.get("status") not in ["running", "pending"]:
+            return False
+        
+        data["status"] = "cancelled"
+        data["completed_at"] = datetime.now().isoformat()
+        data["error"] = "Cancelled by user"
+        
+        await self.set(job_key, json.dumps(data), ttl=86400*7)
+        return True
+
 
 # Usage
 redis_service = RedisService()

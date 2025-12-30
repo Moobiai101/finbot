@@ -1,6 +1,6 @@
 """Break and Retest Strategy.
 
-Market structure based strategy:
+Market structure based strategy used by institutional traders:
 - Identify level breaks (support becomes resistance, vice versa)
 - Wait for price to retest the broken level
 - Enter on rejection from the level
@@ -24,8 +24,8 @@ class BreakRetestStrategy(BaseStrategy):
     
     def __init__(
         self,
-        retest_threshold: float = 0.4,  # % distance from broken level
-        volume_multiplier: float = 1.2,
+        retest_threshold: float = 0.6,  # % distance from broken level (was 0.4%)
+        volume_multiplier: float = 1.15,  # Reduced from 1.2 (more signals)
         enabled: bool = True,
     ):
         """
@@ -50,6 +50,32 @@ class BreakRetestStrategy(BaseStrategy):
     @property
     def description(self) -> str:
         return "Break & Retest - Trade retests of broken support/resistance"
+    
+    def _calculate_confidence(self, volume_ratio: float, level_distance: float) -> float:
+        """
+        Calculate dynamic confidence based on retest quality.
+        
+        Base: 0.58, Max: 0.80
+        """
+        base = 0.58
+        
+        # Volume confirmation
+        if volume_ratio >= 1.5:
+            volume_score = 0.12
+        elif volume_ratio >= 1.3:
+            volume_score = 0.08
+        else:
+            volume_score = 0.04
+        
+        # Level proximity (closer = better)
+        if level_distance <= 0.2:
+            proximity_score = 0.10
+        elif level_distance <= 0.4:
+            proximity_score = 0.06
+        else:
+            proximity_score = 0.03
+        
+        return min(0.80, max(0.55, base + volume_score + proximity_score))
     
     def evaluate(self, state: MarketState) -> Signal:
         """Evaluate for break and retest setup."""
@@ -80,8 +106,9 @@ class BreakRetestStrategy(BaseStrategy):
                         level_touch = abs(last_candle['low'] - resistance) / resistance * 100
                         
                         if level_touch <= self.retest_threshold:
-                            # Check volume
+                            # Check volume (more lenient)
                             if state.volume_ratio >= self.volume_multiplier:
+                                confidence = self._calculate_confidence(state.volume_ratio, distance)
                                 stop_loss = resistance * 0.99
                                 target = state.get_nearest_resistance()
                                 if not target or target <= price:
@@ -90,8 +117,8 @@ class BreakRetestStrategy(BaseStrategy):
                                 return self._create_signal(
                                     signal_type=SignalType.LONG,
                                     state=state,
-                                    confidence=0.72,
-                                    reason=f"Break Retest Long: {resistance:.2f} now support",
+                                    confidence=confidence,
+                                    reason=f"Break Retest Long: {resistance:.2f} now support, Vol:{state.volume_ratio:.1f}x",
                                     stop_loss=stop_loss,
                                     target=target,
                                 )
@@ -118,8 +145,9 @@ class BreakRetestStrategy(BaseStrategy):
                         level_touch = abs(last_candle['high'] - support) / support * 100
                         
                         if level_touch <= self.retest_threshold:
-                            # Check volume
+                            # Check volume (more lenient)
                             if state.volume_ratio >= self.volume_multiplier:
+                                confidence = self._calculate_confidence(state.volume_ratio, distance)
                                 stop_loss = support * 1.01
                                 target = state.get_nearest_support()
                                 if not target or target >= price:
@@ -128,10 +156,11 @@ class BreakRetestStrategy(BaseStrategy):
                                 return self._create_signal(
                                     signal_type=SignalType.SHORT,
                                     state=state,
-                                    confidence=0.72,
-                                    reason=f"Break Retest Short: {support:.2f} now resistance",
+                                    confidence=confidence,
+                                    reason=f"Break Retest Short: {support:.2f} now resistance, Vol:{state.volume_ratio:.1f}x",
                                     stop_loss=stop_loss,
                                     target=target,
                                 )
         
         return self._hold_signal(state, "No break and retest setup")
+

@@ -1,7 +1,7 @@
 """EMA Pullback in Trend Strategy.
 
-Trend-following strategy:
-- Confirm strong trend with EMA alignment
+Trend-following strategy used by professional momentum traders:
+- Confirm strong trend with EMA alignment (9/21/50)
 - Wait for pullback to 21 EMA
 - Enter on rejection from EMA
 - Ride the trend continuation
@@ -24,9 +24,9 @@ class EMAPullbackStrategy(BaseStrategy):
     
     def __init__(
         self,
-        ema_touch_threshold: float = 0.3,  # % distance from 21 EMA
-        require_adx: bool = True,
-        min_adx: float = 25,
+        ema_touch_threshold: float = 0.5,  # % distance from 21 EMA (was 0.3%)
+        require_adx: bool = False,  # Made optional (often missing in data)
+        min_adx: float = 20,  # Lowered from 25 (more signals)
         enabled: bool = True,
     ):
         """
@@ -50,6 +50,34 @@ class EMAPullbackStrategy(BaseStrategy):
     def description(self) -> str:
         return "EMA Pullback - Trade pullbacks to 21 EMA in trending markets"
     
+    def _calculate_confidence(self, adx: float, ema_distance: float) -> float:
+        """
+        Calculate dynamic confidence based on trend strength and proximity.
+        
+        Base: 0.55, Max: 0.82
+        """
+        base = 0.55
+        
+        # ADX trend strength
+        if adx and adx >= 30:
+            adx_score = 0.15
+        elif adx and adx >= 25:
+            adx_score = 0.10
+        elif adx and adx >= 20:
+            adx_score = 0.07
+        else:
+            adx_score = 0.03
+        
+        # EMA proximity (closer = higher confidence)
+        if ema_distance <= 0.15:
+            proximity_score = 0.12
+        elif ema_distance <= 0.3:
+            proximity_score = 0.08
+        else:
+            proximity_score = 0.04
+        
+        return min(0.82, max(0.50, base + adx_score + proximity_score))
+    
     def evaluate(self, state: MarketState) -> Signal:
         """Evaluate for EMA pullback setup."""
         if not self.enabled:
@@ -69,9 +97,9 @@ class EMAPullbackStrategy(BaseStrategy):
         if alignment == 'mixed':
             return self._hold_signal(state, "No clear trend (EMAs mixed)")
         
-        # Check ADX for trend strength
+        # Check ADX for trend strength (if required)
+        adx = state.indicators.adx
         if self.require_adx:
-            adx = state.indicators.adx
             if adx is None or adx < self.min_adx:
                 return self._hold_signal(
                     state, 
@@ -83,6 +111,9 @@ class EMAPullbackStrategy(BaseStrategy):
         # Calculate distance from 21 EMA
         ema21_distance = abs(price - ema21) / ema21 * 100
         
+        # Calculate dynamic confidence
+        confidence = self._calculate_confidence(adx, ema21_distance)
+        
         # Bullish setup
         if alignment == 'bullish':
             # Price should be near or touching 21 EMA from above
@@ -93,7 +124,7 @@ class EMAPullbackStrategy(BaseStrategy):
                 )
             
             # Price should be between 21 and 9 EMA (pullback)
-            if price < ema21 * 0.997:  # Allow slight overshoot
+            if price < ema21 * 0.996:  # Allow slight overshoot (was 0.997)
                 return self._hold_signal(state, "Price broke below 21 EMA")
             
             if price > ema9:
@@ -111,8 +142,8 @@ class EMAPullbackStrategy(BaseStrategy):
                     return self._create_signal(
                         signal_type=SignalType.LONG,
                         state=state,
-                        confidence=0.70,
-                        reason=f"EMA Pullback Long: Bounce from 21 EMA ({ema21:.2f})",
+                        confidence=confidence,
+                        reason=f"EMA Pullback Long: Bounce from 21 EMA ({ema21:.2f}), ADX:{adx:.0f}" if adx else f"EMA Pullback Long: Bounce from 21 EMA ({ema21:.2f})",
                         stop_loss=stop_loss,
                     )
         
@@ -126,7 +157,7 @@ class EMAPullbackStrategy(BaseStrategy):
                 )
             
             # Price should be between 21 and 9 EMA (pullback)
-            if price > ema21 * 1.003:  # Allow slight overshoot
+            if price > ema21 * 1.004:  # Allow slight overshoot (was 1.003)
                 return self._hold_signal(state, "Price broke above 21 EMA")
             
             if price < ema9:
@@ -144,9 +175,10 @@ class EMAPullbackStrategy(BaseStrategy):
                     return self._create_signal(
                         signal_type=SignalType.SHORT,
                         state=state,
-                        confidence=0.70,
-                        reason=f"EMA Pullback Short: Rejection from 21 EMA ({ema21:.2f})",
+                        confidence=confidence,
+                        reason=f"EMA Pullback Short: Rejection from 21 EMA ({ema21:.2f}), ADX:{adx:.0f}" if adx else f"EMA Pullback Short: Rejection from 21 EMA ({ema21:.2f})",
                         stop_loss=stop_loss,
                     )
         
         return self._hold_signal(state, "No EMA pullback setup")
+

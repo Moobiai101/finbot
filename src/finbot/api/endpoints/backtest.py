@@ -46,8 +46,56 @@ async def run_backtest_task(job_id: str, start: datetime, end: datetime, capital
             # Override universe if provided
             pass  # TODO: Implement symbol override in engine if needed
         
+        # Create progress tracking state (thread-safe)
+        import threading
+        progress_lock = threading.Lock()
+        last_progress = {"symbol": "", "done": 0, "total": 0}
+        
+        def progress_callback(symbol: str, done: int, total: int):
+            """Thread-safe progress callback."""
+            with progress_lock:
+                last_progress["symbol"] = symbol
+                last_progress["done"] = done
+                last_progress["total"] = total
+        
         # Run Backtest (CPU heavy) in threadpool to avoid blocking async loop
-        portfolios = await asyncio.to_thread(engine.run)
+        # Run with progress callback
+        def run_with_progress():
+            return engine.run(progress_callback=progress_callback)
+        
+        # Start a background task to update Redis periodically with progress
+        async def update_progress_periodically():
+            while True:
+                await asyncio.sleep(2)  # Update every 2 seconds
+                with progress_lock:
+                    if last_progress["total"] > 0:
+                        await redis_svc.update_job_progress(
+                            job_id,
+                            last_progress["symbol"],
+                            last_progress["done"],
+                            last_progress["total"]
+                        )
+                # Check if backtest completed
+                job = await redis_svc.get_job(job_id)
+                if job and job.get("status") in ["completed", "failed", "cancelled"]:
+                    break
+        
+        # Start progress updater
+        progress_task = asyncio.create_task(update_progress_periodically())
+        
+        try:
+            portfolios = await asyncio.to_thread(run_with_progress)
+        finally:
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Check if job was cancelled during execution
+        job = await redis_svc.get_job(job_id)
+        if job and job.get("status") == "cancelled":
+            return  # Don't overwrite cancelled status
         
         # Generate Report
         report = await asyncio.to_thread(generate_report, portfolios)
@@ -125,7 +173,24 @@ async def list_backtests():
             "id": job["id"],
             "status": job["status"],
             "submitted_at": job["submitted_at"],
-            "strategies": "All Enabled" 
+            "strategies": "All Enabled",
+            "progress": job.get("progress")  # Include progress info
         })
         
     return summary
+
+@router.post("/{job_id}/cancel")
+async def cancel_backtest(job_id: str):
+    """Cancel a running or pending backtest job."""
+    redis_svc = RedisService.get_instance()
+    
+    success = await redis_svc.cancel_job(job_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=400, 
+            detail="Job not found or already completed/cancelled"
+        )
+    
+    return {"status": "cancelled", "job_id": job_id, "message": "Job cancelled successfully"}
+

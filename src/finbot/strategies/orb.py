@@ -1,6 +1,6 @@
 """Opening Range Breakout (ORB) Strategy.
 
-One of the most popular intraday strategies:
+One of the most popular intraday strategies (used by Crabel Capital):
 - Wait for 9:15-9:30 to form the opening range
 - Enter when price breaks above/below the range with volume
 - Stop loss at opposite side of range
@@ -26,9 +26,9 @@ class ORBStrategy(BaseStrategy):
     def __init__(
         self,
         range_minutes: int = 15,
-        volume_multiplier: float = 1.5,
-        min_range_percent: float = 0.3,
-        max_range_percent: float = 2.0,
+        volume_multiplier: float = 1.3,  # Reduced from 1.5 (hedge fund: 1.3-1.5x)
+        min_range_percent: float = 0.2,  # Reduced from 0.3 (more opportunities)
+        max_range_percent: float = 1.5,  # Reduced from 2.0 (avoid wide volatile ranges)
         enabled: bool = True,
     ):
         """
@@ -36,9 +36,9 @@ class ORBStrategy(BaseStrategy):
         
         Args:
             range_minutes: Minutes to form opening range (default 15)
-            volume_multiplier: Required volume vs average (default 1.5x)
-            min_range_percent: Minimum range size (default 0.3%)
-            max_range_percent: Maximum range size (default 2.0%)
+            volume_multiplier: Required volume vs average (default 1.3x)
+            min_range_percent: Minimum range size (default 0.2%)
+            max_range_percent: Maximum range size (default 1.5%)
         """
         super().__init__(enabled)
         self.range_minutes = range_minutes
@@ -53,6 +53,32 @@ class ORBStrategy(BaseStrategy):
     @property
     def description(self) -> str:
         return "Opening Range Breakout - Trade breakouts of the first 15-min range"
+    
+    def _calculate_confidence(self, range_percent: float, volume_ratio: float) -> float:
+        """
+        Calculate dynamic confidence based on breakout quality.
+        
+        Base: 0.60, Max: 0.85
+        """
+        base = 0.60
+        
+        # Range quality: 0.5-1.0% is ideal (not too small, not too large)
+        if 0.5 <= range_percent <= 1.0:
+            range_score = 0.12
+        elif 0.3 <= range_percent <= 1.3:
+            range_score = 0.08
+        else:
+            range_score = 0.04
+        
+        # Volume confirmation: higher volume = stronger breakout
+        if volume_ratio >= 2.0:
+            volume_score = 0.12
+        elif volume_ratio >= 1.5:
+            volume_score = 0.08
+        else:
+            volume_score = 0.04
+        
+        return min(0.85, max(0.55, base + range_score + volume_score))
     
     def evaluate(self, state: MarketState) -> Signal:
         """Evaluate for ORB setup."""
@@ -80,23 +106,26 @@ class ORBStrategy(BaseStrategy):
         if not breakout:
             return self._hold_signal(state, "No breakout yet")
         
-        # Check volume
+        # Check volume (more lenient check)
         if state.volume_ratio < self.volume_multiplier:
             return self._hold_signal(
                 state, 
                 f"Volume too low: {state.volume_ratio:.1f}x (need {self.volume_multiplier}x)"
             )
         
+        # Calculate dynamic confidence
+        confidence = self._calculate_confidence(range_percent, state.volume_ratio)
+        
         # Calculate levels
         if breakout == 'long':
             stop_loss = orb.low
             target = state.current_price + (orb_range * 1.5)
-            reason = f"ORB Long: Broke {orb.high:.2f}, SL {stop_loss:.2f}"
+            reason = f"ORB Long: Broke {orb.high:.2f}, Range:{range_percent:.1f}%, Vol:{state.volume_ratio:.1f}x"
             
             return self._create_signal(
                 signal_type=SignalType.LONG,
                 state=state,
-                confidence=0.75,
+                confidence=confidence,
                 reason=reason,
                 stop_loss=stop_loss,
                 target=target,
@@ -105,13 +134,14 @@ class ORBStrategy(BaseStrategy):
         else:  # short
             stop_loss = orb.high
             target = state.current_price - (orb_range * 1.5)
-            reason = f"ORB Short: Broke {orb.low:.2f}, SL {stop_loss:.2f}"
+            reason = f"ORB Short: Broke {orb.low:.2f}, Range:{range_percent:.1f}%, Vol:{state.volume_ratio:.1f}x"
             
             return self._create_signal(
                 signal_type=SignalType.SHORT,
                 state=state,
-                confidence=0.75,
+                confidence=confidence,
                 reason=reason,
                 stop_loss=stop_loss,
                 target=target,
             )
+

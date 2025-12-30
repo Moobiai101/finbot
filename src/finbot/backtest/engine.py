@@ -70,13 +70,23 @@ class BacktestEngine:
         
         self.portfolios["COMBINED"] = PortfolioState("COMBINED", capital, capital)
     
-    def run(self):
-        """Run the backtest simulation."""
+    def run(self, progress_callback=None):
+        """
+        Run the backtest simulation.
+        
+        Args:
+            progress_callback: Optional callable(current_symbol, symbols_done, total_symbols)
+                               to report progress during execution.
+        """
         logger.info(f"🚀 Starting Backtest: {self.start_date.date()} to {self.end_date.date()}")
         
         # 1. Resolve Universe Tokens (if needed, or just use symbols)
         # For historical data, we mostly need Symbol + Exchange. Token is needed if API demands it.
         self.universe.resolve_tokens()
+        
+        # Get symbols with tokens for accurate count
+        symbols_with_tokens = [s for s in NIFTY_30_WEIGHTED if s.token]
+        total_symbols = len(symbols_with_tokens)
         
         # 2. Iterate each Symbol (Series-Parallel approach)
         # We simulate one symbol's full history, then next.
@@ -92,10 +102,14 @@ class BacktestEngine:
         
         results = {}
         
-        for stock in tqdm(NIFTY_30_WEIGHTED, desc="Backtesting Symbols"):
-            if not stock.token:
-                continue
-                
+        for idx, stock in enumerate(tqdm(symbols_with_tokens, desc="Backtesting Symbols")):
+            # Report progress
+            if progress_callback:
+                try:
+                    progress_callback(stock.symbol, idx, total_symbols)
+                except Exception as e:
+                    logger.warning(f"Progress callback error: {e}")
+            
             # Fetch Data
             df = self.loader.fetch_data(
                 stock.symbol, stock.token, self.start_date, self.end_date
@@ -109,6 +123,13 @@ class BacktestEngine:
             
             # Run Simulation for this symbol
             self._simulate_symbol(stock, df)
+        
+        # Final progress update
+        if progress_callback:
+            try:
+                progress_callback("Complete", total_symbols, total_symbols)
+            except Exception:
+                pass
             
         logger.info("✅ Backtest Complete.")
         return self.portfolios
@@ -175,16 +196,63 @@ class BacktestEngine:
                 # self._process_signal(self.portfolios["COMBINED"], signal, row)
 
     def _build_state(self, stock, df, i, row, timestamp, opening_range):
-        # Extract IndicatorValues from row
+        """
+        Build complete MarketState with ALL required fields for strategy evaluation.
+        """
+        # Extract IndicatorValues from row - include ALL calculated indicators
         indicators = IndicatorValues(
             ema_9=row.get('ema_9'),
             ema_21=row.get('ema_21'),
             ema_50=row.get('ema_50'),
+            sma_20=row.get('sma_20'),
+            sma_200=row.get('sma_200'),
             rsi_14=row.get('rsi_14'),
             vwap=row.get('vwap'),
-            atr_14=row.get('atr_14')
-            # ... add others as needed
+            atr_14=row.get('atr_14'),
+            macd=row.get('macd'),
+            macd_signal=row.get('macd_signal'),
+            macd_histogram=row.get('macd_histogram'),
+            bb_upper=row.get('bb_upper'),
+            bb_middle=row.get('bb_middle'),
+            bb_lower=row.get('bb_lower'),
+            supertrend=row.get('supertrend'),
+            supertrend_direction=row.get('supertrend_direction'),
+            # ADX - Critical for EMA_PULLBACK strategy
+            adx=row.get('adx'),
+            plus_di=row.get('plus_di'),
+            minus_di=row.get('minus_di'),
         )
+        
+        # Calculate volume ratio (current vs 20-period average)
+        # Critical for ORB, ENGULFING, BREAK_RETEST strategies
+        volume_ratio = 1.0
+        if i >= 20 and 'volume' in df.columns:
+            avg_volume = df.iloc[max(0, i-20):i]['volume'].mean()
+            if avg_volume > 0:
+                volume_ratio = row['volume'] / avg_volume
+        
+        # Find support/resistance levels from swing points
+        # Critical for ENGULFING_LEVELS and BREAK_RETEST strategies
+        supports, resistances = [], []
+        if i >= 30:
+            supports, resistances = IndicatorEngine.find_support_resistance(
+                df.iloc[max(0, i-60):i+1]
+            )
+        
+        # Calculate previous day high/low
+        prev_day_high, prev_day_low, prev_day_close = None, None, None
+        current_date = timestamp.date()
+        for j in range(i-1, max(0, i-100), -1):
+            prev_ts = df.index[j]
+            if prev_ts.date() < current_date:
+                # Found previous day - get that day's high/low/close
+                prev_date = prev_ts.date()
+                day_data = df[(df.index.date == prev_date)]
+                if len(day_data) > 0:
+                    prev_day_high = day_data['high'].max()
+                    prev_day_low = day_data['low'].min()
+                    prev_day_close = day_data['close'].iloc[-1]
+                break
         
         # Candles slice (expensive to copy list every time, but needed for pattern detection)
         # Limit to last 50
@@ -208,8 +276,16 @@ class BacktestEngine:
             current_time=timestamp,
             candles_5m=recent_candles,
             indicators=indicators,
-            opening_range=opening_range
-            # Prev day high/low would need lookup, skipping for v1 Speed
+            opening_range=opening_range,
+            # Volume context - enables ORB, ENGULFING, BREAK_RETEST
+            volume_ratio=volume_ratio,
+            # Support/Resistance levels - enables ENGULFING, BREAK_RETEST
+            support_levels=supports,
+            resistance_levels=resistances,
+            # Previous day levels - better targets for VWAP
+            prev_day_high=prev_day_high,
+            prev_day_low=prev_day_low,
+            prev_day_close=prev_day_close,
         )
         return state
 

@@ -1,6 +1,6 @@
 """Engulfing at Key Levels Strategy.
 
-Reversal strategy using candlestick patterns:
+Reversal strategy using candlestick patterns (50-70% accuracy):
 - Identify key support/resistance levels
 - Wait for price to reach these levels
 - Look for engulfing pattern with volume
@@ -25,8 +25,8 @@ class EngulfingLevelsStrategy(BaseStrategy):
     
     def __init__(
         self,
-        level_threshold: float = 0.5,  # % distance from level
-        volume_multiplier: float = 1.3,
+        level_threshold: float = 0.7,  # % distance from level (was 0.5%)
+        volume_multiplier: float = 1.2,  # Reduced from 1.3 (more signals)
         enabled: bool = True,
     ):
         """
@@ -66,7 +66,7 @@ class EngulfingLevelsStrategy(BaseStrategy):
         
         price = state.current_price
         
-        # Check volume
+        # Check volume (more lenient threshold)
         if state.volume_ratio < self.volume_multiplier:
             return self._hold_signal(
                 state,
@@ -80,11 +80,13 @@ class EngulfingLevelsStrategy(BaseStrategy):
             if not near_support:
                 return self._hold_signal(state, "Bullish engulfing but not at support")
             
-            # Check RSI for oversold
+            # Check RSI for oversold (tighter threshold)
             rsi = state.indicators.rsi_14
-            confidence = 0.65
-            if rsi and rsi < 40:
+            confidence = 0.58
+            if rsi and rsi < 35:
                 confidence = 0.75  # Higher confidence if RSI oversold
+            elif rsi and rsi < 45:
+                confidence = 0.65
             
             # Get nearest support for stop
             support = state.get_nearest_support()
@@ -98,7 +100,7 @@ class EngulfingLevelsStrategy(BaseStrategy):
                 signal_type=SignalType.LONG,
                 state=state,
                 confidence=confidence,
-                reason=f"Bullish Engulfing at support {support:.2f}",
+                reason=f"Bullish Engulfing at support {support:.2f}, RSI:{rsi:.0f}" if rsi else f"Bullish Engulfing at support {support:.2f}",
                 stop_loss=stop_loss,
                 target=target,
             )
@@ -110,11 +112,13 @@ class EngulfingLevelsStrategy(BaseStrategy):
             if not near_resistance:
                 return self._hold_signal(state, "Bearish engulfing but not at resistance")
             
-            # Check RSI for overbought
+            # Check RSI for overbought (tighter threshold)
             rsi = state.indicators.rsi_14
-            confidence = 0.65
-            if rsi and rsi > 60:
+            confidence = 0.58
+            if rsi and rsi > 65:
                 confidence = 0.75  # Higher confidence if RSI overbought
+            elif rsi and rsi > 55:
+                confidence = 0.65
             
             # Get nearest resistance for stop
             resistance = state.get_nearest_resistance()
@@ -128,9 +132,10 @@ class EngulfingLevelsStrategy(BaseStrategy):
                 signal_type=SignalType.SHORT,
                 state=state,
                 confidence=confidence,
-                reason=f"Bearish Engulfing at resistance {resistance:.2f}",
+                reason=f"Bearish Engulfing at resistance {resistance:.2f}, RSI:{rsi:.0f}" if rsi else f"Bearish Engulfing at resistance {resistance:.2f}",
                 stop_loss=stop_loss,
                 target=target,
             )
         
         return self._hold_signal(state, "No setup")
+

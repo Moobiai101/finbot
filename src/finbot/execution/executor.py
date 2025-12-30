@@ -227,7 +227,17 @@ class TradingExecutor:
             return None
     
     def _update_all_states(self) -> None:
-        """Update market states with latest data."""
+        """
+        Update market states with latest data.
+        
+        Refreshes:
+        - Current price (every call)
+        - Indicators (every 5 minutes)
+        - Volume ratio
+        - Opening range
+        """
+        now = datetime.now()
+        
         for key, state in self.market_states.items():
             try:
                 # Get current LTP
@@ -237,13 +247,81 @@ class TradingExecutor:
                 
                 if ltp:
                     state.current_price = ltp
-                    state.last_updated = datetime.now()
+                    state.last_updated = now
                     
                     # Update opening range if in formation period
                     self._update_opening_range(state)
                     
+                    # Refresh indicators every 5 minutes (on the 5-minute mark)
+                    if now.minute % 5 == 0 and now.second < 10:
+                        self._refresh_indicators(state)
+                    
             except Exception as e:
                 logger.warning(f"Failed to update {key}: {e}")
+    
+    def _refresh_indicators(self, state: MarketState) -> None:
+        """
+        Refresh indicators and volume ratio for a state.
+        
+        Called periodically to keep indicators fresh for strategy evaluation.
+        """
+        try:
+            # Get latest 5m candles
+            end = datetime.now()
+            start = end - timedelta(hours=6)  # Last 6 hours of data
+            
+            candles = self.angel_client.get_historical_data(
+                symbol=state.symbol,
+                token=state.token,
+                exchange=state.exchange,
+                interval="5m",
+                from_date=start,
+                to_date=end,
+            )
+            
+            if not candles or len(candles) < 20:
+                return
+            
+            # Convert to DataFrame
+            df = pd.DataFrame([{
+                'timestamp': c.timestamp,
+                'open': c.open,
+                'high': c.high,
+                'low': c.low,
+                'close': c.close,
+                'volume': c.volume,
+            } for c in candles])
+            
+            # Recalculate indicators (includes ADX, RSI, VWAP, etc.)
+            state.indicators = IndicatorEngine.calculate_all(df)
+            
+            # Calculate volume ratio (current candle volume vs 20-period average)
+            if len(df) >= 20 and 'volume' in df.columns:
+                avg_volume = df.iloc[-21:-1]['volume'].mean()  # Last 20 excluding current
+                current_volume = df.iloc[-1]['volume']
+                state.volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+            # Update candles in state
+            state.candles_5m = [
+                Candle(
+                    timestamp=c.timestamp,
+                    open=c.open,
+                    high=c.high,
+                    low=c.low,
+                    close=c.close,
+                    volume=c.volume,
+                ) for c in candles[-50:]
+            ]
+            
+            # Refresh support/resistance levels
+            supports, resistances = IndicatorEngine.find_support_resistance(df)
+            state.support_levels = supports
+            state.resistance_levels = resistances
+            
+            logger.debug(f"Refreshed indicators for {state.symbol}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to refresh indicators for {state.symbol}: {e}")
     
     def _update_opening_range(self, state: MarketState) -> None:
         """Update opening range for ORB strategy."""
