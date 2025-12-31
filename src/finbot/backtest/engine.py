@@ -351,7 +351,7 @@ class BacktestEngine:
             stop_loss=signal.stop_loss,
             target=signal.target,
             confidence=signal.confidence,
-            r   eason=signal.reason
+            reason=signal.reason
         )
         
         pf.active_trades[signal.symbol] = trade
