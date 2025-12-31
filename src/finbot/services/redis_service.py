@@ -214,8 +214,15 @@ class RedisService:
                     pass
         return jobs
 
-    async def update_job_status(self, job_id: str, status: str, result: dict = None, error: str = None) -> None:
-        """Update job status."""
+    async def update_job_status(
+        self, 
+        job_id: str, 
+        status: str, 
+        result: dict = None, 
+        error: str = None,
+        extra_data: dict = None
+    ) -> None:
+        """Update job status with optional extra data."""
         job_key = f"job:{job_id}"
         raw = await self.get(job_key.replace(self.prefix, "")) # .get handles prefix
         
@@ -229,6 +236,8 @@ class RedisService:
             data["result"] = result
         if error:
             data["error"] = error
+        if extra_data:
+            data.update(extra_data)  # Merge extra data into job
             
         if status in ["completed", "failed"]:
             data["completed_at"] = datetime.now().isoformat()

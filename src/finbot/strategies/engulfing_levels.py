@@ -96,11 +96,19 @@ class EngulfingLevelsStrategy(BaseStrategy):
             resistance = state.get_nearest_resistance()
             target = resistance if resistance else price * 1.02
             
+            # Build reason string safely (support might be None)
+            if support and rsi:
+                reason = f"Bullish Engulfing at {support:.2f}, RSI:{rsi:.0f}"
+            elif support:
+                reason = f"Bullish Engulfing at {support:.2f}"
+            else:
+                reason = f"Bullish Engulfing near support level"
+            
             return self._create_signal(
                 signal_type=SignalType.LONG,
                 state=state,
                 confidence=confidence,
-                reason=f"Bullish Engulfing at support {support:.2f}, RSI:{rsi:.0f}" if rsi else f"Bullish Engulfing at support {support:.2f}",
+                reason=reason,
                 stop_loss=stop_loss,
                 target=target,
             )
@@ -128,11 +136,19 @@ class EngulfingLevelsStrategy(BaseStrategy):
             support = state.get_nearest_support()
             target = support if support else price * 0.98
             
+            # Build reason string safely (resistance might be None)
+            if resistance and rsi:
+                reason = f"Bearish Engulfing at {resistance:.2f}, RSI:{rsi:.0f}"
+            elif resistance:
+                reason = f"Bearish Engulfing at {resistance:.2f}"
+            else:
+                reason = f"Bearish Engulfing near resistance level"
+            
             return self._create_signal(
                 signal_type=SignalType.SHORT,
                 state=state,
                 confidence=confidence,
-                reason=f"Bearish Engulfing at resistance {resistance:.2f}, RSI:{rsi:.0f}" if rsi else f"Bearish Engulfing at resistance {resistance:.2f}",
+                reason=reason,
                 stop_loss=stop_loss,
                 target=target,
             )
