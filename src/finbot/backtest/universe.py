@@ -54,9 +54,21 @@ NIFTY_30_WEIGHTED = [
 class UniverseManager:
     """Manages symbol resolution for backtesting."""
     
+    # Rate limiting: 3 requests per second (same as historical data)
+    MIN_REQUEST_INTERVAL = 0.4  # seconds between requests
+    _last_request_time: float = 0.0
+    
     def __init__(self):
         self.client = get_angel_client()
         self.resolved_symbols: dict[str, BacktestSymbol] = {}
+    
+    def _rate_limit(self):
+        """Enforce rate limiting for API calls."""
+        import time
+        elapsed = time.time() - UniverseManager._last_request_time
+        if elapsed < self.MIN_REQUEST_INTERVAL:
+            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+        UniverseManager._last_request_time = time.time()
 
     def resolve_tokens(self) -> list[BacktestSymbol]:
         """
@@ -71,6 +83,9 @@ class UniverseManager:
         
         for item in NIFTY_30_WEIGHTED:
             try:
+                # Rate limit to avoid "Access denied" errors
+                self._rate_limit()
+                
                 # Remove -EQ suffix for search if needed, but searchScrip usually handles it
                 query = item.symbol.replace("-EQ", "")
                 results = self.client.search_symbol(item.exchange, query)

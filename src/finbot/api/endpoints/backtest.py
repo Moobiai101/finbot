@@ -167,6 +167,23 @@ async def start_backtest(
     background_tasks: BackgroundTasks
 ):
     """Start a backtest job."""
+    days_diff = (request.end_date - request.start_date).days
+    
+    # Validate date range
+    if days_diff < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date range: end_date must be after start_date"
+        )
+    
+    # Warning message for long backtests (included in response)
+    long_backtest_warning = None
+    if days_diff > 30:
+        long_backtest_warning = (
+            f"Note: {days_diff}-day backtest requires significant data. "
+            f"First run may be slow while data is cached. Subsequent runs will be faster."
+        )
+    
     job_id = str(uuid.uuid4())
     redis_svc = RedisService.get_instance()
     

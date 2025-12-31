@@ -175,13 +175,17 @@ class DataLoader:
     ) -> pd.DataFrame:
         """
         Fetch data in 30-day chunks to respect API limits.
-        Includes automatic token refresh on consecutive failures.
+        Includes automatic retry with exponential backoff and token refresh.
         """
         all_candles = []
         current_start = start
         
         # Max chunk size (approx 30 days safe)
         CHUNK_DAYS = 30
+        
+        # Retry settings with exponential backoff
+        MAX_RETRIES = 3
+        BASE_DELAY = 1.0  # seconds
         
         # Track consecutive empty responses (may indicate token expiration)
         consecutive_empty = 0
@@ -194,20 +198,39 @@ class DataLoader:
             # Avoid future dates
             if current_start > datetime.now():
                 break
+            
+            # Retry loop with exponential backoff
+            candles = None
+            for retry in range(MAX_RETRIES):
+                logger.debug(f"  Fetching chunk: {current_start.date()} -> {chunk_end.date()} (attempt {retry + 1}/{MAX_RETRIES})")
                 
-            logger.debug(f"  Fetching chunk: {current_start.date()} -> {chunk_end.date()}")
-            
-            # Rate limit: 3 requests per second max (Angel One limit)
-            self._rate_limit()
-            
-            candles = self.client.get_historical_data(
-                symbol=symbol,
-                token=token,
-                exchange="NSE",
-                interval=interval,
-                from_date=current_start,
-                to_date=chunk_end
-            )
+                # Rate limit: 3 requests per second max (Angel One limit)
+                self._rate_limit()
+                
+                try:
+                    candles = self.client.get_historical_data(
+                        symbol=symbol,
+                        token=token,
+                        exchange="NSE",
+                        interval=interval,
+                        from_date=current_start,
+                        to_date=chunk_end
+                    )
+                    
+                    if candles:
+                        break  # Success, exit retry loop
+                    else:
+                        # Empty response - wait and retry
+                        if retry < MAX_RETRIES - 1:
+                            delay = BASE_DELAY * (2 ** retry)  # 1s, 2s, 4s
+                            logger.debug(f"  Empty response, waiting {delay}s before retry...")
+                            time.sleep(delay)
+                except Exception as e:
+                    logger.warning(f"  API error on attempt {retry + 1}: {e}")
+                    if retry < MAX_RETRIES - 1:
+                        delay = BASE_DELAY * (2 ** retry)
+                        logger.debug(f"  Waiting {delay}s before retry...")
+                        time.sleep(delay)
             
             if candles:
                 all_candles.extend(candles)
