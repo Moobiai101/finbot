@@ -121,6 +121,12 @@ class DataLoader:
                     cached_start = existing_df.index.min().to_pydatetime()
                     cached_end = existing_df.index.max().to_pydatetime()
                     
+                    # Strip timezone info if present (normalize to naive datetime for comparison)
+                    if cached_start.tzinfo is not None:
+                        cached_start = cached_start.replace(tzinfo=None)
+                    if cached_end.tzinfo is not None:
+                        cached_end = cached_end.replace(tzinfo=None)
+                    
                     # If request is within cache, return subset
                     if cached_start <= start_date and cached_end >= end_date:
                         mask = (existing_df.index >= start_date) & (existing_df.index <= end_date)
