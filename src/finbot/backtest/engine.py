@@ -32,6 +32,8 @@ class Trade:
     exit_price: Optional[float] = None
     exit_reason: str = ""
     pnl: float = 0.0
+    confidence: float = 0.0  # Signal confidence (0.0 - 1.0)
+    reason: str = ""  # Signal reason
 
 @dataclass
 class PortfolioState:
@@ -347,7 +349,9 @@ class BacktestEngine:
             quantity=qty,
             side=side,
             stop_loss=signal.stop_loss,
-            target=signal.target
+            target=signal.target,
+            confidence=signal.confidence,
+            r   eason=signal.reason
         )
         
         pf.active_trades[signal.symbol] = trade

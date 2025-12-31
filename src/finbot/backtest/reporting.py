@@ -157,7 +157,7 @@ def _calculate_strategy_breakdown(trades: list[Trade]) -> dict:
             "profit_factor": round(pf, 2),
             "avg_win": round(gross_profit / len(wins), 2) if wins else 0,
             "avg_loss": round(gross_loss / len(losses), 2) if losses else 0,
-            "avg_confidence": round(sum(t.confidence for t in strat_trades) / total * 100, 1) if total > 0 else 0,
+            "avg_confidence": round(sum(getattr(t, 'confidence', 0) for t in strat_trades) / total * 100, 1) if total > 0 else 0,
         }
     
     return breakdown
@@ -266,7 +266,7 @@ def _serialize_trades(trades: list[Trade]) -> list[dict]:
         trade_dict = {
             "symbol": t.symbol,
             "strategy": t.strategy,
-            "signal_type": t.signal_type.value if hasattr(t.signal_type, 'value') else str(t.signal_type),
+            "signal_type": t.side,  # LONG/SHORT
             "entry_time": t.entry_time.isoformat() if t.entry_time else None,
             "exit_time": t.exit_time.isoformat() if t.exit_time else None,
             "entry_price": float(t.entry_price) if t.entry_price else 0,
