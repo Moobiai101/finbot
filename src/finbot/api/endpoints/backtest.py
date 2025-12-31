@@ -66,10 +66,11 @@ async def run_backtest_task(
             await redis_svc.update_job_status(job_id, "running", extra_data={"supabase_run_id": supabase_run_id})
         
         # Login to Angel One for symbol resolution
+        # IMPORTANT: Always force fresh login - cached tokens may be expired on Angel One's side
+        # even if they exist in Redis (the 'Invalid Token' error AG8001)
         from finbot.broker.angel_client import get_angel_client
         client = get_angel_client()
-        if not await client.try_restore_session():
-            await client.login()
+        await client.login()  # Force fresh login, don't use cached session
         
         # Initialize Engine
         engine = BacktestEngine(start, end, capital)
