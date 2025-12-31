@@ -25,7 +25,7 @@ NIFTY_30_WEIGHTED = [
     BacktestSymbol(symbol="INFY-EQ", name="Infosys"),
     BacktestSymbol(symbol="ITC-EQ", name="ITC"),
     BacktestSymbol(symbol="TCS-EQ", name="TCS"),
-    BacktestSymbol(symbol="L&T-EQ", name="Larsen & Toubro"),
+    BacktestSymbol(symbol="LT-EQ", name="Larsen & Toubro"),
     BacktestSymbol(symbol="AXISBANK-EQ", name="Axis Bank"),
     BacktestSymbol(symbol="BHARTIARTL-EQ", name="Bharti Airtel"),
     BacktestSymbol(symbol="SBIN-EQ", name="State Bank of India"),
@@ -40,7 +40,7 @@ NIFTY_30_WEIGHTED = [
     BacktestSymbol(symbol="ULTRACEMCO-EQ", name="UltraTech Cement"),
     BacktestSymbol(symbol="NTPC-EQ", name="NTPC"),
     BacktestSymbol(symbol="POWERGRID-EQ", name="Power Grid"),
-    BacktestSymbol(symbol="TATACOMP-EQ", name="Tata Consumer"), # Often tricky symbol, verify
+    BacktestSymbol(symbol="TATACONSUM-EQ", name="Tata Consumer"),
     BacktestSymbol(symbol="BAJAJFINSV-EQ", name="Bajaj Finserv"),
     BacktestSymbol(symbol="ONGC-EQ", name="ONGC"),
     BacktestSymbol(symbol="WIPRO-EQ", name="Wipro"),

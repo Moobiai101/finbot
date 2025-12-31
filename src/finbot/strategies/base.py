@@ -188,8 +188,9 @@ class BaseStrategy(ABC):
     """
     
     # Global filter settings (can be overridden per strategy)
-    COOLDOWN_MINUTES = 30
-    MAX_DAILY_TRADES = 3
+    # Institutional discipline: fewer, higher-quality trades
+    COOLDOWN_MINUTES = 45  # 45 min between signals per symbol
+    MAX_DAILY_TRADES = 2   # Max 2 trades per symbol per day
     ENFORCE_SESSION = True
     
     def __init__(self, enabled: bool = True):

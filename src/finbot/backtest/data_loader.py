@@ -22,8 +22,15 @@ from finbot.services.redis_service import RedisService
 
 class DataLoader:
     """
-    Robust data loader with chunking and caching.
+    Robust data loader with chunking, caching, and rate limiting.
+    
+    Rate Limits (Angel One):
+    - Historical data API: 3 requests per second
     """
+    
+    # Rate limiting: 3 requests per second
+    MIN_REQUEST_INTERVAL = 0.35  # seconds between requests (slightly > 1/3 for safety)
+    _last_request_time: float = 0.0
     
     def __init__(self):
         self.settings = get_settings()
@@ -32,6 +39,14 @@ class DataLoader:
         
         self.cache_dir = Path(self.settings.backtest_data_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _rate_limit(self):
+        """Enforce rate limiting for API calls."""
+        elapsed = time.time() - DataLoader._last_request_time
+        if elapsed < self.MIN_REQUEST_INTERVAL:
+            sleep_time = self.MIN_REQUEST_INTERVAL - elapsed
+            time.sleep(sleep_time)
+        DataLoader._last_request_time = time.time()
         
     def _get_cache_path(self, symbol: str, interval: str) -> Path:
         return self.cache_dir / f"{symbol}_{interval}.parquet"
@@ -181,6 +196,9 @@ class DataLoader:
                 break
                 
             logger.debug(f"  Fetching chunk: {current_start.date()} -> {chunk_end.date()}")
+            
+            # Rate limit: 3 requests per second max (Angel One limit)
+            self._rate_limit()
             
             candles = self.client.get_historical_data(
                 symbol=symbol,
