@@ -37,7 +37,8 @@ class DataLoader:
         self.client = get_angel_client()
         self.thread_pool = ThreadPoolExecutor(max_workers=2) # Limit concurrency
         
-        self.cache_dir = Path(self.settings.backtest_data_dir)
+        self.cache_dir = Path(self.settings.backtest_data_dir).resolve()
+        logger.info(f"📂 Backtest Data Cache Directory: {self.cache_dir}")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
     
     def _rate_limit(self):
