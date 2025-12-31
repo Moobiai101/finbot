@@ -1,47 +1,58 @@
-"""Break and Retest Strategy.
+"""Break and Retest Strategy - ICT Breaker Block Edition.
 
-Market structure based strategy used by institutional traders:
-- Identify level breaks (support becomes resistance, vice versa)
-- Wait for price to retest the broken level
-- Enter on rejection from the level
-- Target next major level
+Completely overhauled based on Smart Money Concepts (ICT methodology):
+- NO MORE simple S/R breaks (that's what 90% of retail does = losers)
+- Now uses Market Structure Breaks (BOS) detection
+- Enters only at validated Breaker Blocks
+- Requires displacement (strong move with volume)
+- Maximum 2 entries per symbol per day
+
+Key concept: A Breaker Block is the last opposite candle before a structural break.
+When price returns to this zone, institutions often re-enter = high probability trade.
 """
 
 from finbot.data.market_state import MarketState
 from finbot.strategies.base import BaseStrategy, Signal, SignalType
+from finbot.strategies.smc_utils import (
+    detect_market_structure_break,
+    find_breaker_block,
+    detect_liquidity_sweep,
+    is_in_valid_trading_session,
+)
 
 
 class BreakRetestStrategy(BaseStrategy):
     """
-    Break and Retest Strategy.
+    ICT Breaker Block Strategy.
     
-    Setup conditions:
-    1. Key level is broken (support/resistance)
-    2. Price retests the broken level
-    3. Rejection candle forms at the level
-    4. Volume confirms the move
+    Old retail approach (WRONG):
+    - Enter when price is near "broken" S/R level
+    - Result: Gets stop hunted, too many signals
+    
+    New institutional approach (ICT):
+    1. Wait for Break of Structure (BOS) - confirmed market direction
+    2. Identify the Breaker Block (last opposite candle before BOS)
+    3. Wait for price to return to the Breaker Block zone
+    4. Enter on rejection candle with volume confirmation
+    5. Maximum 2 signals per day per symbol
     """
     
     def __init__(
         self,
-        retest_threshold: float = 0.6,  # % distance from broken level (was 0.4%)
-        volume_multiplier: float = 1.15,  # Reduced from 1.2 (more signals)
+        min_displacement_atr: float = 0.5,  # Minimum ATR multiple for BOS
+        volume_multiplier: float = 1.3,  # Require above-average volume
         enabled: bool = True,
     ):
         """
-        Initialize Break Retest strategy.
+        Initialize Breaker Block strategy.
         
         Args:
-            retest_threshold: Max distance from level for retest (%)
-            volume_multiplier: Required volume vs average
+            min_displacement_atr: Minimum displacement for valid BOS (ATR multiple)
+            volume_multiplier: Required volume vs average for entry
         """
         super().__init__(enabled)
-        self.retest_threshold = retest_threshold
+        self.min_displacement_atr = min_displacement_atr
         self.volume_multiplier = volume_multiplier
-        
-        # Track broken levels
-        self._broken_resistances: list[float] = []
-        self._broken_supports: list[float] = []
     
     @property
     def name(self) -> str:
@@ -49,118 +60,160 @@ class BreakRetestStrategy(BaseStrategy):
     
     @property
     def description(self) -> str:
-        return "Break & Retest - Trade retests of broken support/resistance"
+        return "ICT Breaker Block - Trade returns to validated breaker zones after market structure breaks"
     
-    def _calculate_confidence(self, volume_ratio: float, level_distance: float) -> float:
+    def _calculate_confidence(
+        self, 
+        displacement_strength: float, 
+        volume_ratio: float,
+        has_liquidity_sweep: bool
+    ) -> float:
         """
-        Calculate dynamic confidence based on retest quality.
+        Calculate dynamic confidence based on quality factors.
         
-        Base: 0.58, Max: 0.80
+        Base: 0.60, Max: 0.85
         """
-        base = 0.58
+        base = 0.60
+        
+        # Displacement strength (stronger BOS = higher confidence)
+        if displacement_strength >= 1.0:
+            displacement_score = 0.12
+        elif displacement_strength >= 0.7:
+            displacement_score = 0.08
+        else:
+            displacement_score = 0.04
         
         # Volume confirmation
         if volume_ratio >= 1.5:
-            volume_score = 0.12
-        elif volume_ratio >= 1.3:
             volume_score = 0.08
+        elif volume_ratio >= 1.3:
+            volume_score = 0.05
         else:
-            volume_score = 0.04
+            volume_score = 0.02
         
-        # Level proximity (closer = better)
-        if level_distance <= 0.2:
-            proximity_score = 0.10
-        elif level_distance <= 0.4:
-            proximity_score = 0.06
-        else:
-            proximity_score = 0.03
+        # Liquidity sweep bonus (institutions swept stops before move)
+        sweep_bonus = 0.05 if has_liquidity_sweep else 0
         
-        return min(0.80, max(0.55, base + volume_score + proximity_score))
+        return min(0.85, max(0.55, base + displacement_score + volume_score + sweep_bonus))
     
     def evaluate(self, state: MarketState) -> Signal:
-        """Evaluate for break and retest setup."""
+        """Evaluate for ICT Breaker Block setup."""
         if not self.enabled:
             return self._hold_signal(state, "Strategy disabled")
         
+        # Need enough candle data
+        df = state.to_dataframe_5m()
+        if len(df) < 30:
+            return self._hold_signal(state, "Not enough data for market structure analysis")
+        
         price = state.current_price
         
-        # Check for broken resistance becoming support (bullish)
-        # Price above previous resistance, now retesting it
-        for resistance in state.resistance_levels:
-            if price < resistance:
-                continue
-            
-            # Resistance is broken (price above it)
-            distance = (price - resistance) / resistance * 100
-            
-            if distance <= self.retest_threshold:
-                # Price is retesting the broken resistance
-                
-                # Look for bullish rejection
-                df = state.to_dataframe_5m()
-                if len(df) >= 2:
-                    last_candle = df.iloc[-1]
-                    
-                    # Bullish candle with low near the level
-                    if last_candle['close'] > last_candle['open']:
-                        level_touch = abs(last_candle['low'] - resistance) / resistance * 100
-                        
-                        if level_touch <= self.retest_threshold:
-                            # Check volume (more lenient)
-                            if state.volume_ratio >= self.volume_multiplier:
-                                confidence = self._calculate_confidence(state.volume_ratio, distance)
-                                stop_loss = resistance * 0.99
-                                target = state.get_nearest_resistance()
-                                if not target or target <= price:
-                                    target = price * 1.02
-                                
-                                return self._create_signal(
-                                    signal_type=SignalType.LONG,
-                                    state=state,
-                                    confidence=confidence,
-                                    reason=f"Break Retest Long: {resistance:.2f} now support, Vol:{state.volume_ratio:.1f}x",
-                                    stop_loss=stop_loss,
-                                    target=target,
-                                )
+        # Step 1: Detect Market Structure Break
+        bos = detect_market_structure_break(df, lookback=20)
         
-        # Check for broken support becoming resistance (bearish)
-        # Price below previous support, now retesting it
-        for support in state.support_levels:
-            if price > support:
-                continue
-            
-            # Support is broken (price below it)
-            distance = (support - price) / support * 100
-            
-            if distance <= self.retest_threshold:
-                # Price is retesting the broken support
-                
-                # Look for bearish rejection
-                df = state.to_dataframe_5m()
-                if len(df) >= 2:
-                    last_candle = df.iloc[-1]
-                    
-                    # Bearish candle with high near the level
-                    if last_candle['close'] < last_candle['open']:
-                        level_touch = abs(last_candle['high'] - support) / support * 100
-                        
-                        if level_touch <= self.retest_threshold:
-                            # Check volume (more lenient)
-                            if state.volume_ratio >= self.volume_multiplier:
-                                confidence = self._calculate_confidence(state.volume_ratio, distance)
-                                stop_loss = support * 1.01
-                                target = state.get_nearest_support()
-                                if not target or target >= price:
-                                    target = price * 0.98
-                                
-                                return self._create_signal(
-                                    signal_type=SignalType.SHORT,
-                                    state=state,
-                                    confidence=confidence,
-                                    reason=f"Break Retest Short: {support:.2f} now resistance, Vol:{state.volume_ratio:.1f}x",
-                                    stop_loss=stop_loss,
-                                    target=target,
-                                )
+        if bos is None:
+            return self._hold_signal(state, "No market structure break detected")
         
-        return self._hold_signal(state, "No break and retest setup")
-
+        # Step 2: Check displacement strength
+        if bos.displacement_strength < self.min_displacement_atr:
+            return self._hold_signal(
+                state, 
+                f"Weak displacement: {bos.displacement_strength:.2f} ATR (need {self.min_displacement_atr})"
+            )
+        
+        # Step 3: Find the Breaker Block
+        breaker = find_breaker_block(df, bos)
+        
+        if breaker is None:
+            return self._hold_signal(state, "No valid breaker block found")
+        
+        # Step 4: Check if price is at the Breaker Block zone
+        in_zone = breaker.low <= price <= breaker.high
+        
+        # Allow small buffer (0.2% beyond zone)
+        zone_buffer = breaker.high * 0.002
+        near_zone = (breaker.low - zone_buffer) <= price <= (breaker.high + zone_buffer)
+        
+        if not near_zone:
+            return self._hold_signal(
+                state, 
+                f"Price not at breaker zone: {breaker.low:.2f}-{breaker.high:.2f}"
+            )
+        
+        # Step 5: Check volume
+        if state.volume_ratio < self.volume_multiplier:
+            return self._hold_signal(
+                state, 
+                f"Volume too low: {state.volume_ratio:.1f}x (need {self.volume_multiplier}x)"
+            )
+        
+        # Step 6: Look for confirmation candle
+        last_candle = df.iloc[-1]
+        prev_candle = df.iloc[-2]
+        
+        # Check for liquidity sweep (bonus for confidence)
+        sweep = detect_liquidity_sweep(df, lookback=15)
+        has_sweep = sweep is not None
+        
+        # Calculate confidence
+        confidence = self._calculate_confidence(
+            bos.displacement_strength, 
+            state.volume_ratio,
+            has_sweep
+        )
+        
+        # Bullish Breaker Block setup
+        if breaker.block_type == 'bullish':
+            # Need bullish confirmation candle
+            if last_candle['close'] <= last_candle['open']:
+                return self._hold_signal(state, "Waiting for bullish confirmation candle")
+            
+            # Stop loss below breaker block
+            stop_loss = breaker.low * 0.995
+            
+            # Target: next resistance or 2x risk
+            risk = price - stop_loss
+            target = state.get_nearest_resistance() or (price + risk * 2)
+            
+            reason = f"Bullish Breaker at {breaker.low:.2f}-{breaker.high:.2f}"
+            if has_sweep:
+                reason += " (post-sweep)"
+            reason += f", Displacement:{bos.displacement_strength:.1f}ATR"
+            
+            return self._create_signal(
+                signal_type=SignalType.LONG,
+                state=state,
+                confidence=confidence,
+                reason=reason,
+                stop_loss=stop_loss,
+                target=target,
+            )
+        
+        # Bearish Breaker Block setup
+        elif breaker.block_type == 'bearish':
+            # Need bearish confirmation candle
+            if last_candle['close'] >= last_candle['open']:
+                return self._hold_signal(state, "Waiting for bearish confirmation candle")
+            
+            # Stop loss above breaker block
+            stop_loss = breaker.high * 1.005
+            
+            # Target: next support or 2x risk
+            risk = stop_loss - price
+            target = state.get_nearest_support() or (price - risk * 2)
+            
+            reason = f"Bearish Breaker at {breaker.low:.2f}-{breaker.high:.2f}"
+            if has_sweep:
+                reason += " (post-sweep)"
+            reason += f", Displacement:{bos.displacement_strength:.1f}ATR"
+            
+            return self._create_signal(
+                signal_type=SignalType.SHORT,
+                state=state,
+                confidence=confidence,
+                reason=reason,
+                stop_loss=stop_loss,
+                target=target,
+            )
+        
+        return self._hold_signal(state, "No valid breaker block setup")

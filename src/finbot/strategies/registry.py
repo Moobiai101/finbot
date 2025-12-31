@@ -74,16 +74,39 @@ class StrategyRegistry:
         """Get list of enabled strategies."""
         return [s for s in self.strategies.values() if s.enabled]
     
-    def evaluate_all(self, state: MarketState) -> list[Signal]:
+    def evaluate_all(self, state: MarketState, apply_filters: bool = True) -> list[Signal]:
         """
         Evaluate all enabled strategies against market state.
         
         Args:
             state: Current market state
+            apply_filters: Whether to apply institutional filters (cooldowns, limits, session)
             
         Returns:
             List of signals from all strategies
         """
+        from finbot.strategies.base import (
+            check_cooldown, check_daily_limit, is_valid_session, 
+            record_signal, BaseStrategy
+        )
+        
+        # Apply global filters if enabled
+        if apply_filters:
+            # Session timing filter
+            if not is_valid_session(state.current_time):
+                logger.debug(f"⏰ {state.symbol}: Outside valid session (9:30-15:00)")
+                return []
+            
+            # Cooldown filter
+            if check_cooldown(state.symbol, state.current_time, BaseStrategy.COOLDOWN_MINUTES):
+                logger.debug(f"🧊 {state.symbol}: In cooldown period")
+                return []
+            
+            # Daily limit filter
+            if check_daily_limit(state.symbol, state.current_time, BaseStrategy.MAX_DAILY_TRADES):
+                logger.debug(f"📊 {state.symbol}: Daily trade limit reached")
+                return []
+        
         signals = []
         
         for strategy in self.get_enabled_strategies():
@@ -96,6 +119,8 @@ class StrategyRegistry:
                         f"📊 {strategy.name}: {signal.signal_type.value} "
                         f"{state.symbol} | Confidence: {signal.confidence:.0%}"
                     )
+                    # Record the signal for cooldown tracking
+                    record_signal(state.symbol, strategy.name, state.current_time)
                     
             except Exception as e:
                 logger.error(f"Strategy {strategy.name} error: {e}")

@@ -2,11 +2,87 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, time
 from enum import Enum
 from typing import Optional
+from collections import defaultdict
 
 from finbot.data.market_state import MarketState
+
+
+# ===== GLOBAL SIGNAL TRACKER =====
+# Tracks signals across all strategies for cooldown and daily limits
+_signal_tracker: dict[str, list[datetime]] = defaultdict(list)
+_daily_trade_count: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+
+def reset_signal_tracker():
+    """Reset the global signal tracker (call at start of each trading day)."""
+    global _signal_tracker, _daily_trade_count
+    _signal_tracker.clear()
+    _daily_trade_count.clear()
+
+
+def record_signal(symbol: str, strategy: str, timestamp: datetime):
+    """Record that a signal was generated."""
+    _signal_tracker[symbol].append(timestamp)
+    date_key = timestamp.strftime("%Y-%m-%d")
+    _daily_trade_count[date_key][symbol] += 1
+
+
+def check_cooldown(symbol: str, current_time: datetime, cooldown_minutes: int = 30) -> bool:
+    """
+    Check if we're in a cooldown period for this symbol.
+    
+    Returns True if we're STILL in cooldown (should NOT trade).
+    Returns False if cooldown has passed (OK to trade).
+    """
+    if symbol not in _signal_tracker:
+        return False  # No previous signals, not in cooldown
+    
+    last_signals = _signal_tracker[symbol]
+    if not last_signals:
+        return False
+    
+    last_signal_time = max(last_signals)
+    time_since_last = current_time - last_signal_time
+    
+    return time_since_last < timedelta(minutes=cooldown_minutes)
+
+
+def check_daily_limit(symbol: str, current_time: datetime, max_trades: int = 3) -> bool:
+    """
+    Check if we've hit the daily trade limit for this symbol.
+    
+    Returns True if limit REACHED (should NOT trade).
+    Returns False if under limit (OK to trade).
+    """
+    date_key = current_time.strftime("%Y-%m-%d")
+    current_count = _daily_trade_count[date_key][symbol]
+    return current_count >= max_trades
+
+
+def is_valid_session(current_time: datetime) -> bool:
+    """
+    Check if we're in a valid trading session.
+    
+    Avoid:
+    - First 15 minutes (9:15-9:30): Opening volatility & stop hunting
+    - Last 30 minutes (15:00-15:30): Squareoff pressure
+    
+    Returns True if OK to trade, False otherwise.
+    """
+    market_time = current_time.time()
+    
+    # Avoid first 15 minutes
+    if market_time < time(9, 30):
+        return False
+    
+    # Avoid last 30 minutes
+    if market_time >= time(15, 0):
+        return False
+    
+    return True
 
 
 class SignalType(str, Enum):
@@ -104,7 +180,17 @@ class BaseStrategy(ABC):
     Each strategy must implement:
     - evaluate(): Analyze market state and return a signal
     - name: Strategy identifier
+    
+    Includes institutional-grade filters:
+    - Signal cooldown (default 30 min)
+    - Daily trade limits (default 3 per symbol)
+    - Session timing filters
     """
+    
+    # Global filter settings (can be overridden per strategy)
+    COOLDOWN_MINUTES = 30
+    MAX_DAILY_TRADES = 3
+    ENFORCE_SESSION = True
     
     def __init__(self, enabled: bool = True):
         """Initialize strategy."""

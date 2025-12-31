@@ -1,34 +1,40 @@
-"""Opening Range Breakout (ORB) Strategy.
+"""Opening Range Breakout (ORB) Strategy - With Liquidity Sweep Detection.
 
-One of the most popular intraday strategies (used by Crabel Capital):
-- Wait for 9:15-9:30 to form the opening range
-- Enter when price breaks above/below the range with volume
-- Stop loss at opposite side of range
-- Target 1.5-2x the range size
+Enhanced based on Smart Money Concepts:
+- WAIT for liquidity sweep before entering (don't chase breakouts)
+- Enter on failed breakout (sweep and return) for higher probability
+- Standard breakout only if very strong displacement
+
+The key insight: Most ORB breakouts are stop hunts by institutions.
+Smart money WAITS for the sweep, then enters opposite direction.
 """
 
 from datetime import datetime, time
 from finbot.data.market_state import MarketState, OpeningRange
 from finbot.strategies.base import BaseStrategy, Signal, SignalType
+from finbot.strategies.smc_utils import detect_liquidity_sweep
 
 
 class ORBStrategy(BaseStrategy):
     """
-    Opening Range Breakout Strategy.
+    Opening Range Breakout Strategy - Institutional Edition.
     
-    Setup conditions:
-    1. Market forms opening range (9:15-9:30)
-    2. Price breaks above/below range
-    3. Volume is above average
-    4. Confirmation candle closes outside range
+    Two entry modes:
+    1. SWEEP MODE (preferred): Wait for price to sweep ORB level and reverse
+       - Higher win rate, fewer trades
+       - Trades failed breakouts (where retail gets trapped)
+    
+    2. BREAKOUT MODE (strict): Only on very strong displacement
+       - Requires 1.5x ATR move with heavy volume
+       - Most "breakouts" are traps, so filter heavily
     """
     
     def __init__(
         self,
         range_minutes: int = 15,
-        volume_multiplier: float = 1.3,  # Reduced from 1.5 (hedge fund: 1.3-1.5x)
-        min_range_percent: float = 0.2,  # Reduced from 0.3 (more opportunities)
-        max_range_percent: float = 1.5,  # Reduced from 2.0 (avoid wide volatile ranges)
+        volume_multiplier: float = 1.5,  # Stricter than before
+        min_range_percent: float = 0.3,
+        max_range_percent: float = 1.2,  # Tighter max (wide ranges = more noise)
         enabled: bool = True,
     ):
         """
@@ -36,9 +42,9 @@ class ORBStrategy(BaseStrategy):
         
         Args:
             range_minutes: Minutes to form opening range (default 15)
-            volume_multiplier: Required volume vs average (default 1.3x)
-            min_range_percent: Minimum range size (default 0.2%)
-            max_range_percent: Maximum range size (default 1.5%)
+            volume_multiplier: Required volume vs average (now 1.5x)
+            min_range_percent: Minimum range size (default 0.3%)
+            max_range_percent: Maximum range size (default 1.2%)
         """
         super().__init__(enabled)
         self.range_minutes = range_minutes
@@ -52,36 +58,42 @@ class ORBStrategy(BaseStrategy):
     
     @property
     def description(self) -> str:
-        return "Opening Range Breakout - Trade breakouts of the first 15-min range"
+        return "ORB with Sweep Detection - Trade failed breakouts and confirmed moves"
     
-    def _calculate_confidence(self, range_percent: float, volume_ratio: float) -> float:
+    def _calculate_confidence(
+        self, 
+        range_percent: float, 
+        volume_ratio: float,
+        is_sweep_trade: bool
+    ) -> float:
         """
         Calculate dynamic confidence based on breakout quality.
         
-        Base: 0.60, Max: 0.85
+        Sweep trades get higher base confidence (trap trades work better).
         """
-        base = 0.60
+        # Sweep trades start higher (better setups)
+        base = 0.65 if is_sweep_trade else 0.58
         
-        # Range quality: 0.5-1.0% is ideal (not too small, not too large)
-        if 0.5 <= range_percent <= 1.0:
-            range_score = 0.12
-        elif 0.3 <= range_percent <= 1.3:
-            range_score = 0.08
+        # Range quality: 0.5-0.9% is ideal
+        if 0.5 <= range_percent <= 0.9:
+            range_score = 0.10
+        elif 0.3 <= range_percent <= 1.0:
+            range_score = 0.06
         else:
-            range_score = 0.04
+            range_score = 0.02
         
-        # Volume confirmation: higher volume = stronger breakout
+        # Volume confirmation
         if volume_ratio >= 2.0:
-            volume_score = 0.12
+            volume_score = 0.10
         elif volume_ratio >= 1.5:
-            volume_score = 0.08
+            volume_score = 0.06
         else:
-            volume_score = 0.04
+            volume_score = 0.03
         
         return min(0.85, max(0.55, base + range_score + volume_score))
     
     def evaluate(self, state: MarketState) -> Signal:
-        """Evaluate for ORB setup."""
+        """Evaluate for ORB setup with sweep detection."""
         if not self.enabled:
             return self._hold_signal(state, "Strategy disabled")
         
@@ -100,48 +112,97 @@ class ORBStrategy(BaseStrategy):
         if range_percent > self.max_range_percent:
             return self._hold_signal(state, f"Range too large: {range_percent:.2f}%")
         
-        # Check for breakout
+        price = state.current_price
+        df = state.to_dataframe_5m()
+        
+        if len(df) < 5:
+            return self._hold_signal(state, "Not enough candles")
+        
+        # ===== MODE 1: SWEEP DETECTION (Preferred) =====
+        # Look for price that swept ORB level and reversed
+        sweep = detect_liquidity_sweep(df, lookback=10)
+        
+        if sweep and sweep.recovered:
+            # Bullish sweep: swept lows (took out stops) and reversed up
+            if sweep.sweep_type == 'bullish' and sweep.level <= orb.low * 1.002:
+                if state.volume_ratio >= self.volume_multiplier:
+                    confidence = self._calculate_confidence(range_percent, state.volume_ratio, is_sweep_trade=True)
+                    
+                    stop_loss = sweep.sweep_low * 0.995
+                    target = orb.high + (orb_range * 0.5)  # Target mid-way above range
+                    
+                    return self._create_signal(
+                        signal_type=SignalType.LONG,
+                        state=state,
+                        confidence=confidence,
+                        reason=f"ORB Sweep Long: Swept {orb.low:.2f}, reversed. Range:{range_percent:.1f}%",
+                        stop_loss=stop_loss,
+                        target=target,
+                    )
+            
+            # Bearish sweep: swept highs and reversed down
+            elif sweep.sweep_type == 'bearish' and sweep.level >= orb.high * 0.998:
+                if state.volume_ratio >= self.volume_multiplier:
+                    confidence = self._calculate_confidence(range_percent, state.volume_ratio, is_sweep_trade=True)
+                    
+                    stop_loss = sweep.sweep_high * 1.005
+                    target = orb.low - (orb_range * 0.5)
+                    
+                    return self._create_signal(
+                        signal_type=SignalType.SHORT,
+                        state=state,
+                        confidence=confidence,
+                        reason=f"ORB Sweep Short: Swept {orb.high:.2f}, reversed. Range:{range_percent:.1f}%",
+                        stop_loss=stop_loss,
+                        target=target,
+                    )
+        
+        # ===== MODE 2: STRONG BREAKOUT (Stricter criteria) =====
+        # Only if no sweep, and we have VERY strong breakout with volume
         breakout = state.is_orb_breakout()
         
         if not breakout:
-            return self._hold_signal(state, "No breakout yet")
+            return self._hold_signal(state, "No breakout or sweep detected")
         
-        # Check volume (more lenient check)
-        if state.volume_ratio < self.volume_multiplier:
+        # Much stricter volume requirement for standard breakouts
+        if state.volume_ratio < self.volume_multiplier * 1.2:
             return self._hold_signal(
                 state, 
-                f"Volume too low: {state.volume_ratio:.1f}x (need {self.volume_multiplier}x)"
+                f"Breakout volume weak: {state.volume_ratio:.1f}x (need {self.volume_multiplier * 1.2:.1f}x)"
             )
         
-        # Calculate dynamic confidence
-        confidence = self._calculate_confidence(range_percent, state.volume_ratio)
+        # Need the candle to have good body (not just a wick)
+        last_candle = df.iloc[-1]
+        body_size = abs(last_candle['close'] - last_candle['open'])
+        total_size = last_candle['high'] - last_candle['low']
         
-        # Calculate levels
+        if total_size > 0 and body_size / total_size < 0.5:
+            return self._hold_signal(state, "Breakout candle has weak body (possible reversal)")
+        
+        confidence = self._calculate_confidence(range_percent, state.volume_ratio, is_sweep_trade=False)
+        
         if breakout == 'long':
             stop_loss = orb.low
-            target = state.current_price + (orb_range * 1.5)
-            reason = f"ORB Long: Broke {orb.high:.2f}, Range:{range_percent:.1f}%, Vol:{state.volume_ratio:.1f}x"
+            target = price + (orb_range * 1.5)
             
             return self._create_signal(
                 signal_type=SignalType.LONG,
                 state=state,
                 confidence=confidence,
-                reason=reason,
+                reason=f"ORB Breakout Long: Above {orb.high:.2f}, Strong Vol:{state.volume_ratio:.1f}x",
                 stop_loss=stop_loss,
                 target=target,
             )
         
         else:  # short
             stop_loss = orb.high
-            target = state.current_price - (orb_range * 1.5)
-            reason = f"ORB Short: Broke {orb.low:.2f}, Range:{range_percent:.1f}%, Vol:{state.volume_ratio:.1f}x"
+            target = price - (orb_range * 1.5)
             
             return self._create_signal(
                 signal_type=SignalType.SHORT,
                 state=state,
                 confidence=confidence,
-                reason=reason,
+                reason=f"ORB Breakout Short: Below {orb.low:.2f}, Strong Vol:{state.volume_ratio:.1f}x",
                 stop_loss=stop_loss,
                 target=target,
             )
-
