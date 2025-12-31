@@ -284,6 +284,37 @@ async def get_backtest_report(job_id: str):
     }
 
 
+@router.get("/run/{run_id}")
+async def get_backtest_by_run_id(run_id: str):
+    """
+    Get backtest report by Supabase run_id.
+    Used for loading historical backtest results.
+    """
+    db = get_db()
+    
+    # Fetch run from Supabase
+    run = await db.get_backtest_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Backtest run not found")
+    
+    # Fetch trades
+    trades = await db.get_backtest_trades(run_id)
+    
+    return {
+        "id": run_id,
+        "created_at": run.get("created_at"),
+        "start_date": run.get("start_date"),
+        "end_date": run.get("end_date"),
+        "initial_capital": run.get("initial_capital"),
+        "final_capital": run.get("final_capital"),
+        "status": run.get("status"),
+        "summary": run.get("summary", {}),
+        "strategy_breakdown": run.get("strategy_breakdown", {}),
+        "symbol_breakdown": run.get("symbol_breakdown", {}),
+        "trades": trades,
+    }
+
+
 @router.get("/history/list")
 async def list_backtests():
     """List all recent backtests from Supabase."""
